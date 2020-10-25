@@ -94,9 +94,25 @@ export class QueryObserver<
   willFetchOnMount(): boolean {
     return (
       this.options.enabled !== false &&
-      (!this.currentQuery.state.updatedAt ||
+      (!this.currentQuery.state.dataUpdatedAt ||
         this.options.refetchOnMount === 'always' ||
         (this.options.refetchOnMount !== false && this.isStale()))
+    )
+  }
+
+  willFetchOnReconnect(): boolean {
+    return (
+      this.options.enabled !== false &&
+      (this.options.refetchOnReconnect === 'always' ||
+        (this.options.refetchOnReconnect !== false && this.isStale()))
+    )
+  }
+
+  willFetchOnWindowFocus(): boolean {
+    return (
+      this.options.enabled !== false &&
+      (this.options.refetchOnWindowFocus === 'always' ||
+        (this.options.refetchOnWindowFocus !== false && this.isStale()))
     )
   }
 
@@ -195,7 +211,7 @@ export class QueryObserver<
   refetch(
     options?: RefetchOptions
   ): Promise<QueryObserverResult<TData, TError>> {
-    return this.fetch(options)
+    return this.fetch({ origin: 'observerRefetch', ...options })
   }
 
   protected fetch(
@@ -221,10 +237,10 @@ export class QueryObserver<
 
     // Fetch
     return this.currentQuery
-      .fetch(
-        this.options as QueryOptions<TQueryData, TError, TQueryFnData>,
-        fetchOptions
-      )
+      .fetch(this.options as QueryOptions<TQueryData, TError, TQueryFnData>, {
+        ...fetchOptions,
+        origin: fetchOptions?.origin || 'observerFetch',
+      })
       .catch(noop)
   }
 
@@ -275,7 +291,7 @@ export class QueryObserver<
         this.options.refetchIntervalInBackground ||
         focusManager.isFocused()
       ) {
-        this.executeFetch()
+        this.executeFetch({ origin: 'observerRefetchInterval' })
       }
     }, this.options.refetchInterval)
   }
@@ -304,14 +320,16 @@ export class QueryObserver<
     willFetch?: boolean
   ): QueryObserverResult<TData, TError> {
     const { state } = this.currentQuery
-    let { status, isFetching, updatedAt } = state
+    let { dataOrigin, fetchOrigin, isFetching, status } = state
     let isPreviousData = false
     let isPlaceholderData = false
     let data: TData | undefined
+    let updatedAt = state.dataUpdatedAt
 
     // Optimistically set status to loading if we will start fetching
     if (willFetch) {
       isFetching = true
+      fetchOrigin = 'observerFetch'
       if (status === 'idle') {
         status = 'loading'
       }
@@ -325,6 +343,7 @@ export class QueryObserver<
     ) {
       data = this.previousQueryResult.data
       updatedAt = this.previousQueryResult.updatedAt
+      dataOrigin = this.previousQueryResult.dataOrigin
       status = this.previousQueryResult.status
       isPreviousData = true
     }
@@ -365,8 +384,11 @@ export class QueryObserver<
     return {
       ...getStatusProps(status),
       data,
+      dataOrigin,
       error: state.error,
-      failureCount: state.failureCount,
+      errorOrigin: state.errorOrigin,
+      failureCount: state.fetchFailureCount,
+      fetchOrigin,
       isFetched: state.dataUpdateCount > 0,
       isFetchedAfterMount: state.dataUpdateCount > this.initialDataUpdateCount,
       isFetching,
